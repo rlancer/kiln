@@ -14,6 +14,9 @@ import {
   PLAYER_H,
   PLAYER_W,
   RUN_ACCEL,
+  SHELF_SPAN,
+  SHELF_W,
+  SPRING_VEL,
   STOMP_VEL,
   TILE,
   VIEW_W,
@@ -42,7 +45,9 @@ export type GameEvent =
   | { t: "flag" }
   | { t: "exit" }
   | { t: "secret" }
-  | { t: "fail" };
+  | { t: "fail" }
+  | { t: "spring" }
+  | { t: "open" };
 
 type Cell = {
   solid: boolean;
@@ -53,6 +58,8 @@ type Cell = {
   exit: boolean;
   secret: boolean;
   flag: boolean;
+  spring: boolean;
+  gate: boolean;
 };
 
 export type Brick = { tx: number; ty: number; ttl: number; locked: boolean };
@@ -71,6 +78,9 @@ type Actor = {
   invuln: number;
   spawnX: number;
   spawnY: number;
+  riding: number;
+  landed: number;
+  dust: number;
 };
 
 type Enemy = {
@@ -78,9 +88,24 @@ type Enemy = {
   y: number;
   vx: number;
   alive: boolean;
+  kind: "crab" | "wasp";
   homeX: number;
   homeY: number;
   homeVx: number;
+  phase: number;
+  amp: number;
+  squash: number;
+};
+
+export type Mover = {
+  x: number;
+  y: number;
+  prevX: number;
+  w: number;
+  h: number;
+  origin: number;
+  span: number;
+  phase: number;
 };
 
 type Particle = {
@@ -91,6 +116,7 @@ type Particle = {
   life: number;
   max: number;
   color: string;
+  grav: number;
 };
 
 export type World = {
@@ -111,6 +137,8 @@ export type World = {
   collected: Set<string>;
   shake: number;
   camX: number;
+  movers: Mover[];
+  gatesOpen: boolean;
 };
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -125,7 +153,7 @@ const EMPTY: Input = {
 
 function parseCell(ch: string): Cell {
   return {
-    solid: ch === "#" || ch === "?",
+    solid: ch === "#" || ch === "?" || ch === "G",
     crack: ch === "?",
     socket: ch === "s",
     spike: ch === "^",
@@ -133,6 +161,8 @@ function parseCell(ch: string): Cell {
     exit: ch === "x",
     secret: ch === "z",
     flag: ch === "f",
+    spring: ch === "*",
+    gate: ch === "G",
   };
 }
 
@@ -146,6 +176,7 @@ export function createWorld(level: Level, alreadyCollected: ReadonlySet<string> 
   let spawnX = TILE;
   let spawnY = 12 * TILE;
   const enemies: Enemy[] = [];
+  const movers: Mover[] = [];
 
   for (let ty = 0; ty < level.height; ty++) {
     for (let tx = 0; tx < level.width; tx++) {
@@ -156,11 +187,37 @@ export function createWorld(level: Level, alreadyCollected: ReadonlySet<string> 
         spawnX = tx * TILE + (TILE - PLAYER_W) / 2;
         spawnY = (ty + 1) * TILE - PLAYER_H;
       }
-      if (ch === "e") {
+      if (ch === "e" || ch === "w") {
+        const wasp = ch === "w";
         const homeX = tx * TILE + 1;
-        const homeY = (ty + 1) * TILE - ENEMY_H;
-        const homeVx = tx % 2 === 0 ? 36 : -36;
-        enemies.push({ x: homeX, y: homeY, vx: homeVx, alive: true, homeX, homeY, homeVx });
+        const homeY = wasp ? ty * TILE + 8 : (ty + 1) * TILE - ENEMY_H;
+        const homeVx = wasp ? 32 : tx % 2 === 0 ? 36 : -36;
+        enemies.push({
+          x: homeX,
+          y: homeY,
+          vx: homeVx,
+          alive: true,
+          kind: wasp ? "wasp" : "crab",
+          homeX,
+          homeY,
+          homeVx,
+          phase: tx * 0.7,
+          amp: wasp ? 10 : 0,
+          squash: 0,
+        });
+      }
+      if (ch === "=") {
+        const origin = tx * TILE;
+        movers.push({
+          x: origin,
+          prevX: origin,
+          y: ty * TILE + 6,
+          w: SHELF_W,
+          h: 8,
+          origin,
+          span: SHELF_SPAN,
+          phase: (tx % 7) * 0.55,
+        });
       }
     }
   }
@@ -183,6 +240,9 @@ export function createWorld(level: Level, alreadyCollected: ReadonlySet<string> 
       invuln: 0,
       spawnX,
       spawnY,
+      riding: -1,
+      landed: 0,
+      dust: 0,
     },
     enemies,
     time: 0,
@@ -197,7 +257,13 @@ export function createWorld(level: Level, alreadyCollected: ReadonlySet<string> 
     collected,
     shake: 0,
     camX: 0,
+    movers,
+    gatesOpen: !cells.some((cell) => cell.coin),
   };
+  for (const mover of movers) {
+    mover.x = shelfX(mover, 0);
+    mover.prevX = mover.x;
+  }
   world.camX = cameraTarget(world);
   return world;
 }
@@ -222,7 +288,12 @@ function brickAt(world: World, tx: number, ty: number): Brick | undefined {
 function isSolid(world: World, tx: number, ty: number): boolean {
   const cell = cellAt(world, tx, ty);
   if (!cell) return false;
+  if (cell.gate && world.gatesOpen) return false;
   return cell.solid || brickAt(world, tx, ty) !== undefined;
+}
+
+function shelfX(mover: Mover, time: number): number {
+  return mover.origin + Math.sin(time * 1.15 + mover.phase) * mover.span;
 }
 
 function playerRect(player: Actor): Rect {
@@ -258,6 +329,7 @@ function burst(world: World, x: number, y: number, color: string, count: number)
       life,
       max: life,
       color,
+      grav: 280,
     });
   }
 }
@@ -308,6 +380,7 @@ function tryPlace(world: World): void {
   player.holding = false;
   nudgeOut(player, target.tx, target.ty);
   world.events.push({ t: locked ? "lock" : "place" });
+  if (locked) world.shake = Math.max(world.shake, 1.5);
   burst(world, target.tx * TILE + 8, target.ty * TILE + 8, locked ? "#b7d1c0" : "#ffd27a", 6);
 }
 
@@ -350,22 +423,45 @@ function bumpCrack(world: World, tx: number, ty: number): void {
   }
 }
 
+function shelfUnder(world: World, prevBottom: number, bottom: number): Mover | null {
+  const player = world.player;
+  let best: Mover | null = null;
+  for (const mover of world.movers) {
+    const overlap = player.x + PLAYER_W - 2 > mover.x && player.x + 2 < mover.x + mover.w;
+    if (!overlap) continue;
+    if (prevBottom > mover.y + 1 || bottom < mover.y) continue;
+    if (!best || mover.y < best.y) best = mover;
+  }
+  return best;
+}
+
 function moveY(world: World, dt: number): void {
   const player = world.player;
   const before = player.vy;
+  const prevBottom = player.y + PLAYER_H;
   player.y += player.vy * dt;
   if (player.y < 0) {
     player.y = 0;
     player.vy = 0;
   }
   const body: Rect = { x: player.x + 1, y: player.y, w: PLAYER_W - 2, h: PLAYER_H };
-  const hits = tilesTouching( body, (tx, ty) => isSolid(world, tx, ty));
-  if (hits.length === 0) {
-    player.grounded = false;
-    return;
-  }
-  if (before > 0) {
-    player.y = Math.min(...hits.map((hit) => hit.ty * TILE - PLAYER_H));
+  const hits = tilesTouching(body, (tx, ty) => isSolid(world, tx, ty));
+  const bottom = player.y + PLAYER_H;
+  const shelf = before > 0 ? shelfUnder(world, prevBottom, bottom) : null;
+  if (before > 0 && (hits.length > 0 || shelf)) {
+    const tileTop = hits.length > 0 ? Math.min(...hits.map((hit) => hit.ty * TILE)) : Number.POSITIVE_INFINITY;
+    const shelfTop = shelf ? shelf.y : Number.POSITIVE_INFINITY;
+    if (shelf && shelfTop <= tileTop) {
+      player.y = shelf.y - PLAYER_H;
+      player.vy = 0;
+      player.grounded = true;
+      player.riding = world.movers.indexOf(shelf);
+      if (before > 80) player.landed = 0.1;
+      return;
+    }
+    player.y = tileTop - PLAYER_H;
+    player.riding = -1;
+    if (before > 80) player.landed = 0.1;
     if (before > 160) {
       world.events.push({ t: "land" });
       burst(world, player.x + PLAYER_W / 2, player.y + PLAYER_H, "#5c261c", 4);
@@ -374,10 +470,13 @@ function moveY(world: World, dt: number): void {
     player.grounded = true;
     return;
   }
-  if (before < 0) {
+  if (before < 0 && hits.length > 0) {
     for (const hit of hits) bumpCrack(world, hit.tx, hit.ty);
     player.y = Math.max(...hits.map((hit) => hit.ty * TILE + TILE));
     player.vy = 0;
+    player.grounded = false;
+    player.riding = -1;
+    return;
   }
   player.grounded = false;
 }
@@ -408,8 +507,11 @@ function tickBricks(world: World, dt: number): void {
 function die(world: World): void {
   if (world.player.invuln > 0 || world.status !== "play") return;
   world.status = "dead";
-  world.deadTimer = 0.42;
+  world.deadTimer = 0.5;
   world.shake = 4;
+  world.player.vy = -300;
+  world.player.vx *= 0.25;
+  world.player.riding = -1;
   world.events.push({ t: "die" });
   burst(world, world.player.x + PLAYER_W / 2, world.player.y + 6, "#ffb15a", 8);
 }
@@ -423,18 +525,35 @@ function respawn(world: World): void {
   player.grounded = true;
   player.invuln = 0.75;
   player.jumpCut = false;
+  player.riding = -1;
+  player.landed = 0;
   world.status = "play";
   for (const enemy of world.enemies) {
     enemy.x = enemy.homeX;
     enemy.y = enemy.homeY;
     enemy.vx = enemy.homeVx;
     enemy.alive = true;
+    enemy.squash = 0;
   }
 }
 
 function stepEnemies(world: World, dt: number): void {
   for (const enemy of world.enemies) {
     if (!enemy.alive) continue;
+    if (enemy.kind === "wasp") {
+      const next = enemy.x + enemy.vx * dt;
+      const rect = { x: next, y: enemy.y, w: ENEMY_W, h: ENEMY_H };
+      const blocked = tilesTouching(rect, (tx, ty) => isSolid(world, tx, ty)).length > 0;
+      const minX = enemy.homeX - 56;
+      const maxX = enemy.homeX + 56;
+      if (blocked || next < minX || next > maxX) enemy.vx *= -1;
+      else enemy.x = next;
+      const bob = enemy.homeY + Math.sin(world.time * 2.6 + enemy.phase) * enemy.amp;
+      const body = { x: enemy.x, y: bob, w: ENEMY_W, h: ENEMY_H };
+      const jammed = tilesTouching(body, (tx, ty) => isSolid(world, tx, ty)).length > 0;
+      enemy.y = jammed ? enemy.homeY : bob;
+      continue;
+    }
     const next = enemy.x + enemy.vx * dt;
     const rect = { x: next, y: enemy.y, w: ENEMY_W, h: ENEMY_H };
     const blocked = tilesTouching( rect, (tx, ty) => isSolid(world, tx, ty)).length > 0;
@@ -464,10 +583,12 @@ function stepCombat(world: World, dt: number): void {
     const stomp = player.vy > 0 && prevBottom <= enemy.y + 5;
     if (stomp) {
       enemy.alive = false;
+      enemy.squash = 0.32;
       player.vy = STOMP_VEL;
       player.grounded = false;
+      player.riding = -1;
       world.events.push({ t: "stomp" });
-      burst(world, enemy.x + 7, enemy.y + 4, "#6e8b74", 6);
+      burst(world, enemy.x + 7, enemy.y + 4, enemy.kind === "wasp" ? "#ffb15a" : "#6e8b74", 6);
       continue;
     }
     die(world);
@@ -492,6 +613,7 @@ function stepOverlays(world: World): void {
       world.coins += 1;
       world.events.push({ t: "coin", key });
       burst(world, hit.tx * TILE + 8, hit.ty * TILE + 8, "#ffd27a", 4);
+      refreshGates(world);
     }
     if (cell.flag) {
       const key = `${hit.tx},${hit.ty}`;
@@ -518,9 +640,91 @@ function stepOverlays(world: World): void {
 
 function cameraTarget(world: World): number {
   const max = Math.max(0, world.level.width * TILE - VIEW_W);
-  const look = world.player.facing * 22;
+  const speed = Math.min(1, Math.abs(world.player.vx) / MAX_RUN);
+  const look = world.player.facing * (16 + speed * 40);
   const target = world.player.x + PLAYER_W / 2 - VIEW_W / 2 + look;
   return Math.max(0, Math.min(max, target));
+}
+
+function refreshGates(world: World): void {
+  const open = !world.cells.some((cell) => cell.coin);
+  const hasGate = world.cells.some((cell) => cell.gate);
+  if (open && !world.gatesOpen && hasGate) {
+    world.events.push({ t: "open" });
+    world.shake = Math.max(world.shake, 1.4);
+    for (let ty = 0; ty < world.level.height; ty++) {
+      for (let tx = 0; tx < world.level.width; tx++) {
+        const cell = world.cells[idx(world.level, tx, ty)]!;
+        if (cell.gate) burst(world, tx * TILE + 8, ty * TILE + 8, "#b7d1c0", 4);
+      }
+    }
+  }
+  world.gatesOpen = open;
+}
+
+function syncShelves(world: World): void {
+  for (const mover of world.movers) {
+    mover.prevX = mover.x;
+    mover.x = shelfX(mover, world.time);
+  }
+}
+
+function carryShelf(world: World): void {
+  const player = world.player;
+  if (player.riding < 0) return;
+  const mover = world.movers[player.riding];
+  if (!mover) {
+    player.riding = -1;
+    return;
+  }
+  player.x += mover.x - mover.prevX;
+}
+
+function stickShelf(world: World): void {
+  const player = world.player;
+  if (player.riding < 0 || player.vy < 0) return;
+  const mover = world.movers[player.riding];
+  if (!mover) {
+    player.riding = -1;
+    return;
+  }
+  const overlap = player.x + PLAYER_W - 1 > mover.x && player.x + 1 < mover.x + mover.w;
+  const bottom = player.y + PLAYER_H;
+  if (!overlap || bottom > mover.y + 5) {
+    player.riding = -1;
+    return;
+  }
+  player.y = mover.y - PLAYER_H;
+  player.vy = 0;
+  player.grounded = true;
+}
+
+function stepSprings(world: World): void {
+  const player = world.player;
+  if (player.vy < 0) return;
+  const rect: Rect = {
+    x: player.x + 1,
+    y: player.y + PLAYER_H * 0.35,
+    w: PLAYER_W - 2,
+    h: PLAYER_H * 0.65,
+  };
+  const hits = tilesTouching(rect, (tx, ty) => cellAt(world, tx, ty)?.spring === true);
+  const hit = hits[0];
+  if (!hit) return;
+  player.vy = SPRING_VEL;
+  player.grounded = false;
+  player.riding = -1;
+  player.jumpCut = true;
+  player.coyote = 0;
+  player.jumpBuffer = 0;
+  world.events.push({ t: "spring" });
+  world.bumps.set(`s${hit.tx},${hit.ty}`, 0.18);
+  burst(world, hit.tx * TILE + 8, hit.ty * TILE + 12, "#ffd27a", 5);
+}
+
+function approachCamera(world: World, dt: number): void {
+  const target = cameraTarget(world);
+  world.camX += (target - world.camX) * Math.min(1, dt * 7);
 }
 
 function tickAmbient(world: World, dt: number): void {
@@ -528,6 +732,42 @@ function tickAmbient(world: World, dt: number): void {
   world.hintLeft = Math.max(0, world.hintLeft - dt);
   world.shake = Math.max(0, world.shake - dt * 10);
   if (world.player.invuln > 0) world.player.invuln -= dt;
+  if (world.player.landed > 0) world.player.landed -= dt;
+  for (const enemy of world.enemies) {
+    if (enemy.squash > 0) enemy.squash = Math.max(0, enemy.squash - dt);
+  }
+  syncShelves(world);
+  const player = world.player;
+  if (player.grounded && Math.abs(player.vx) > 48 && world.status === "play") {
+    player.dust -= dt;
+    if (player.dust <= 0) {
+      player.dust = 0.08;
+      const life = 0.22;
+      world.particles.push({
+        x: player.x + (player.vx > 0 ? 1 : PLAYER_W - 2),
+        y: player.y + PLAYER_H - 2,
+        vx: -Math.sign(player.vx) * 18,
+        vy: -12,
+        life,
+        max: life,
+        color: "#5c261c",
+        grav: 280,
+      });
+    }
+  }
+  if (world.particles.length < 28 && Math.random() < world.level.heat * 0.18) {
+    const life = 0.7 + Math.random() * 0.45;
+    world.particles.push({
+      x: world.camX + Math.random() * VIEW_W,
+      y: 120 + Math.random() * 100,
+      vx: -6 - Math.random() * 12,
+      vy: -14 - Math.random() * 16,
+      life,
+      max: life,
+      color: Math.random() > 0.45 ? "#ffb15a" : "#c45032",
+      grav: 24,
+    });
+  }
   for (const [key, left] of world.bumps) {
     const next = left - dt;
     if (next <= 0) world.bumps.delete(key);
@@ -535,7 +775,7 @@ function tickAmbient(world: World, dt: number): void {
   }
   for (const particle of world.particles) {
     particle.life -= dt;
-    particle.vy += 280 * dt;
+    particle.vy += particle.grav * dt;
     particle.x += particle.vx * dt;
     particle.y += particle.vy * dt;
   }
@@ -548,12 +788,18 @@ export function step(world: World, input: Input = EMPTY, dt: number): void {
   tickBricks(world, dt);
 
   if (world.status === "dead") {
+    const player = world.player;
+    player.vy = Math.min(MAX_FALL, player.vy + GRAVITY * dt);
+    player.y += player.vy * dt;
+    player.x += player.vx * dt;
     world.deadTimer -= dt;
     if (world.deadTimer <= 0) respawn(world);
+    approachCamera(world, dt);
     return;
   }
   if (world.status !== "play") return;
 
+  carryShelf(world);
   const player = world.player;
   if (input.left && !input.right) player.facing = -1;
   if (input.right && !input.left) player.facing = 1;
@@ -583,6 +829,7 @@ export function step(world: World, input: Input = EMPTY, dt: number): void {
     player.coyote = 0;
     player.jumpBuffer = 0;
     player.jumpCut = false;
+    player.riding = -1;
     world.events.push({ t: "jump" });
   } else {
     if (!input.jumpHeld && player.vy < 0 && !player.jumpCut) {
@@ -593,7 +840,9 @@ export function step(world: World, input: Input = EMPTY, dt: number): void {
   }
 
   moveY(world, dt);
+  stickShelf(world);
   if (player.vy >= 0 && probeGround(world)) player.grounded = true;
+  stepSprings(world);
 
   if (input.placePressed) tryPlace(world);
   stepEnemies(world, dt);
@@ -601,6 +850,5 @@ export function step(world: World, input: Input = EMPTY, dt: number): void {
   if (world.status === "play") stepOverlays(world);
   if (world.status === "play" && player.y > world.level.height * TILE) die(world);
 
-  const target = cameraTarget(world);
-  world.camX += (target - world.camX) * Math.min(1, dt * 7);
+  approachCamera(world, dt);
 }

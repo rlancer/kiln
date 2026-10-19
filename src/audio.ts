@@ -51,6 +51,14 @@ export function play(name: string): void {
   if (name === "flag") tone({ freq: 300, dur: 0.1, type: "triangle", gain: 0.04 });
   if (name === "die") tone({ freq: 180, dur: 0.22, type: "sawtooth", gain: 0.04 });
   if (name === "fail") tone({ freq: 90, dur: 0.04, type: "square", gain: 0.03 });
+  if (name === "spring") {
+    tone({ freq: 240, dur: 0.06, type: "triangle", gain: 0.05 });
+    tone({ freq: 480, dur: 0.1, delay: 0.05, gain: 0.04 });
+  }
+  if (name === "open") {
+    tone({ freq: 360, dur: 0.08, type: "triangle", gain: 0.04 });
+    tone({ freq: 540, dur: 0.12, delay: 0.08, gain: 0.04 });
+  }
   if (name === "exit" || name === "secret") {
     tone({ freq: 392, dur: 0.1, gain: 0.05 });
     tone({ freq: 523, dur: 0.12, delay: 0.09, gain: 0.05 });

@@ -178,8 +178,13 @@ function boot(): void {
       touch.add(name);
       if (name === "jump") jumpEdge = true;
       if (name === "place") placeEdge = true;
-      if (name === "left") dirEdge = { x: -1, y: 0 };
-      if (name === "right") dirEdge = { x: 1, y: 0 };
+    if (name === "left") dirEdge = { x: -1, y: 0 };
+    if (name === "right") dirEdge = { x: 1, y: 0 };
+    if (name === "up") {
+      dirEdge = { x: 0, y: -1 };
+      jumpEdge = true;
+    }
+    if (name === "down") dirEdge = { x: 0, y: 1 };
       canvas.focus();
     };
     const release = () => touch.delete(name);
@@ -199,7 +204,7 @@ function boot(): void {
   window.addEventListener("resize", fit);
   canvas.focus();
 
-  if (mode === "title") say("Kiln. Jump to start. Arrows move, Z jumps, X sets a brick.");
+  if (mode === "title") say("Kiln. Jump to start. Arrows move, Z jumps, X sets a brick, R restarts.");
   if (mode === "play" && world) say(`${world.level.name}. ${world.level.hint}`);
 
   let last = performance.now();
@@ -218,8 +223,16 @@ function boot(): void {
     } else if (mode === "won" && input.jumpPressed) {
       mode = "map";
       say("The flue.");
+    } else if ((mode === "play" || mode === "pause") && world && rEdge) {
+      const level = world.level;
+      world = createWorld(level, new Set(save.coins));
+      mode = "play";
+      banner = "";
+      bannerLeft = 0;
+      outcome = null;
+      say(`${level.name}. ${level.hint}`);
     } else if (mode === "pause") {
-      say("Paused. Jump continues. X leaves the chamber.");
+      say("Paused. Jump continues. R restarts. X leaves the chamber.");
       if (input.jumpPressed) mode = "play";
       if (input.placePressed && world) {
         mode = "map";

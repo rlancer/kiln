@@ -16,8 +16,12 @@ export const RUN_ACCEL = 380;
 export const AIR_ACCEL = 220;
 export const FRICTION = 780;
 export const MAX_FALL = 340;
-export const COYOTE = 0.04;
+export const COYOTE = 0.08;
 export const JUMP_BUFFER = 0.1;
 export const JUMP_CUT = 0.48;
 export const BRICK_LIFE = 6;
 export const STOMP_VEL = -220;
+// Clears a shelf about two tiles higher than a full jump.
+export const SPRING_VEL = -540;
+export const SHELF_SPAN = 112;
+export const SHELF_W = 32;

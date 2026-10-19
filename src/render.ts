@@ -1,4 +1,4 @@
-import { PLAYER_W, TILE, VIEW_H, VIEW_W } from "./constants";
+import { BRICK_LIFE, PLAYER_W, TILE, VIEW_H, VIEW_W } from "./constants";
 import { drawText, drawTextCentered } from "./font";
 import { LINKS, NODES, isVisible, type NodeId, type Progress } from "./map";
 import { placeTarget, type World } from "./sim";
@@ -171,6 +171,7 @@ function drawKeeper(
   frame: number,
   facing: number,
   holding: boolean,
+  pose: "idle" | "run" | "jump" | "fall" | "dead",
 ): void {
   ctx.save();
   ctx.translate(Math.round(x), Math.round(y));
@@ -178,6 +179,11 @@ function drawKeeper(
     ctx.translate(PLAYER_W, 0);
     ctx.scale(-1, 1);
   }
+  if (pose === "dead") {
+    ctx.translate(0, 14);
+    ctx.scale(1, -1);
+  }
+  const tuck = pose === "jump" ? -2 : pose === "fall" ? 1 : 0;
   ctx.fillStyle = hood;
   ctx.fillRect(2, 0, 6, 2);
   ctx.fillRect(1, 2, 8, 4);
@@ -189,17 +195,72 @@ function drawKeeper(
   ctx.fillRect(2, 6, 6, 5);
   ctx.fillStyle = holding ? glaze : "#5a4638";
   ctx.fillRect(4, 7, 2, 2);
-  const step = frame === 1 ? 1 : 0;
+  const step = pose === "run" && frame === 1 ? 1 : 0;
   ctx.fillStyle = hood;
-  ctx.fillRect(2, 11, 2, 3);
-  ctx.fillRect(6, 11 - step, 2, 3 + step);
+  ctx.fillRect(2, 11 + tuck, 2, 3);
+  ctx.fillRect(6, 11 - step + tuck, 2, 3 + step);
   if (holding) {
+    const bob = pose === "run" && frame === 1 ? -1 : 0;
     ctx.fillStyle = glaze;
-    ctx.fillRect(8, 6, 4, 3);
+    ctx.fillRect(8, 5 + bob, 4, 3);
     ctx.fillStyle = clay;
-    ctx.fillRect(8, 8, 4, 1);
+    ctx.fillRect(8, 7 + bob, 4, 1);
   }
   ctx.restore();
+}
+
+function drawSpring(ctx: CanvasRenderingContext2D, x: number, y: number, compressed: boolean): void {
+  const squash = compressed ? 4 : 0;
+  ctx.fillStyle = hood;
+  ctx.fillRect(x + 2, y + 13, 12, 3);
+  ctx.fillStyle = slag;
+  ctx.fillRect(x + 3, y + 10 + squash, 10, 2);
+  ctx.fillStyle = glaze;
+  ctx.fillRect(x + 4, y + 7 + squash, 8, 2);
+  ctx.fillStyle = coal;
+  ctx.fillRect(x + 5, y + 4 + squash, 6, 2);
+  ctx.fillStyle = "#fff2cc";
+  ctx.fillRect(x + 6, y + 2 + squash, 4, 2);
+}
+
+function drawGate(ctx: CanvasRenderingContext2D, x: number, y: number, time: number): void {
+  ctx.fillStyle = "#1a100e";
+  ctx.fillRect(x + 2, y, 12, TILE);
+  ctx.fillStyle = slag;
+  const shift = Math.floor(time * 3) % 2;
+  for (let i = 0; i < 4; i++) ctx.fillRect(x + 3 + i * 3, y + shift, 1, TILE - 1);
+  ctx.fillStyle = slagBright;
+  ctx.fillRect(x + 2, y, 12, 1);
+  ctx.fillRect(x + 2, y + TILE - 2, 12, 1);
+}
+
+function drawShelf(ctx: CanvasRenderingContext2D, x: number, y: number, w: number): void {
+  const px = Math.round(x);
+  const py = Math.round(y);
+  ctx.fillStyle = clayDark;
+  ctx.fillRect(px, py, w, 8);
+  ctx.fillStyle = clay;
+  ctx.fillRect(px, py, w, 5);
+  ctx.fillStyle = clayLight;
+  ctx.fillRect(px, py, w, 2);
+  ctx.fillStyle = slag;
+  ctx.fillRect(px + 2, py + 3, 3, 2);
+  ctx.fillRect(px + w - 5, py + 3, 3, 2);
+}
+
+function drawWasp(ctx: CanvasRenderingContext2D, x: number, y: number, frame: number): void {
+  const px = Math.round(x);
+  const py = Math.round(y);
+  const wing = frame ? 4 : 2;
+  ctx.fillStyle = coal;
+  ctx.fillRect(px + 1, py + 3 - wing, 4, wing);
+  ctx.fillRect(px + 9, py + 3 - wing, 4, wing);
+  ctx.fillStyle = hood;
+  ctx.fillRect(px + 4, py + 3, 6, 5);
+  ctx.fillStyle = glaze;
+  ctx.fillRect(px + 5, py + 4, 2, 2);
+  ctx.fillStyle = "#fff2cc";
+  ctx.fillRect(px + 8, py + 4, 1, 1);
 }
 
 function drawCrab(ctx: CanvasRenderingContext2D, x: number, y: number, frame: number): void {
@@ -239,6 +300,8 @@ function drawWorld(ctx: CanvasRenderingContext2D, world: World, reduced: boolean
       }
       if (cell.socket) drawSocket(ctx, x, y, world.time);
       if (cell.spike && !world.bricks.some((brick) => brick.tx === tx && brick.ty === ty)) drawSpikes(ctx, x, y);
+      if (cell.spring) drawSpring(ctx, x, y, (world.bumps.get(`s${tx},${ty}`) ?? 0) > 0);
+      if (cell.gate && !world.gatesOpen) drawGate(ctx, x, y, world.time);
       if (cell.coin) drawCoin(ctx, x, y, world.time, tx);
       if (cell.exit) drawMouth(ctx, x, y, false, world.time);
       if (cell.secret) drawMouth(ctx, x, y, true, world.time);
@@ -246,9 +309,12 @@ function drawWorld(ctx: CanvasRenderingContext2D, world: World, reduced: boolean
     }
   }
 
+  for (const mover of world.movers) drawShelf(ctx, mover.x - cam, mover.y, mover.w);
+
   for (const brick of world.bricks) {
-    const hot = brick.locked ? 1 : Math.max(0, brick.ttl / 6);
-    drawBrick(ctx, brick.tx * TILE - cam, brick.ty * TILE, hot, brick.locked);
+    const hot = brick.locked ? 1 : Math.max(0, brick.ttl / BRICK_LIFE);
+    const flash = !brick.locked && brick.ttl < 1.5 && Math.floor(world.time * 10) % 2 === 0;
+    drawBrick(ctx, brick.tx * TILE - cam, brick.ty * TILE, flash ? 1 : hot, brick.locked);
   }
 
   if (world.player.holding && world.status === "play") {
@@ -263,20 +329,38 @@ function drawWorld(ctx: CanvasRenderingContext2D, world: World, reduced: boolean
 
   const frame = Math.floor(world.time * 8) % 2;
   for (const enemy of world.enemies) {
-    if (!enemy.alive) continue;
-    drawCrab(ctx, enemy.x - cam, enemy.y, frame);
+    if (!enemy.alive && enemy.squash <= 0) continue;
+    if (enemy.squash > 0 && !enemy.alive) {
+      ctx.fillStyle = enemy.kind === "wasp" ? coal : hood;
+      ctx.fillRect(Math.round(enemy.x - cam) + 1, Math.round(enemy.y) + 7, 12, 3);
+      continue;
+    }
+    if (enemy.kind === "wasp") drawWasp(ctx, enemy.x - cam, enemy.y, frame);
+    else drawCrab(ctx, enemy.x - cam, enemy.y, frame);
   }
 
   const blink = world.player.invuln > 0 && Math.floor(world.time * 14) % 2 === 0;
-  if (world.status !== "dead" && !blink) {
-    const squash = world.player.grounded && world.player.vy === 0 ? 0 : -1;
+  if (!blink) {
+    const airborne = !world.player.grounded;
+    const pose =
+      world.status === "dead"
+        ? "dead"
+        : airborne && world.player.vy < -30
+          ? "jump"
+          : airborne
+            ? "fall"
+            : Math.abs(world.player.vx) > 20
+              ? "run"
+              : "idle";
+    const squash = !reduced && world.player.landed > 0 && world.player.grounded ? 1 : airborne && !reduced ? -1 : 0;
     drawKeeper(
       ctx,
       world.player.x - cam,
-      world.player.y + (reduced ? 0 : squash),
-      world.player.grounded && Math.abs(world.player.vx) > 20 ? frame : 0,
+      world.player.y + squash,
+      frame,
       world.player.facing,
       world.player.holding,
+      reduced && pose === "jump" ? "idle" : pose,
     );
   }
 
@@ -295,9 +379,28 @@ function drawWorld(ctx: CanvasRenderingContext2D, world: World, reduced: boolean
     ctx.fillStyle = soot;
     ctx.fillRect(11, 9, 6, 4);
   }
+  const loose = world.bricks.filter((brick) => !brick.locked);
+  if (loose.length > 0) {
+    const ttl = Math.min(...loose.map((brick) => brick.ttl));
+    const hot = Math.max(0, Math.min(1, ttl / BRICK_LIFE));
+    const warn = ttl < 1.6 && Math.floor(world.time * 8) % 2 === 0;
+    ctx.fillStyle = hood;
+    ctx.fillRect(24, 8, 28, 4);
+    ctx.fillStyle = warn ? "#fff2cc" : hot > 0.45 ? glaze : coal;
+    ctx.fillRect(25, 9, Math.max(1, Math.round(26 * hot)), 2);
+  }
   const coinCount = String(world.collected.size);
-  drawCoin(ctx, VIEW_W - 22 - coinCount.length * 6, 2, world.time, 1);
+  const coinX = VIEW_W - 22 - coinCount.length * 6;
+  drawCoin(ctx, coinX, 2, world.time, 1);
   drawText(ctx, coinCount, VIEW_W - 8 - coinCount.length * 6, 8, glaze, 1);
+  const hasGate = world.cells.some((cell) => cell.gate);
+  if (hasGate && !world.gatesOpen) {
+    const left = world.cells.reduce((sum, cell) => sum + (cell.coin ? 1 : 0), 0);
+    if (left > 0) {
+      const label = `${left} LEFT`;
+      drawText(ctx, label, coinX - 8 - label.length * 6, 8, smoke, 1);
+    }
+  }
 
   if (world.time < 2) {
     drawTextCentered(ctx, world.level.name, VIEW_W / 2, 8, smoke, 1);
@@ -321,17 +424,25 @@ function drawTitle(ctx: CanvasRenderingContext2D, time: number, reduced: boolean
   drawBrick(ctx, socketX, 168 - drop, locked ? 0.2 : 1, locked);
   drawTextCentered(ctx, "Kiln", VIEW_W / 2, 48, glaze, 4);
   drawTextCentered(ctx, "Jump to start", VIEW_W / 2, 92, smoke, 1);
-  drawTextCentered(ctx, "Arrows move   Z jumps   X sets a brick", VIEW_W / 2, 210, slagBright, 1);
+  drawTextCentered(ctx, "Arrows move   Z jumps   X sets a brick   R restarts", VIEW_W / 2, 210, slagBright, 1);
 }
 
-function drawTunnel(ctx: CanvasRenderingContext2D, ax: number, ay: number, bx: number, by: number, hot: boolean): void {
+function drawTunnel(
+  ctx: CanvasRenderingContext2D,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  hot: boolean,
+  secret: boolean,
+): void {
   const steps = Math.max(2, Math.hypot(bx - ax, by - ay) / 8);
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const x = Math.round(ax + (bx - ax) * t);
     const y = Math.round(ay + (by - ay) * t);
-    ctx.fillStyle = hot ? clay : "#3a241c";
-    ctx.fillRect(x - 3, y - 2, 6, 4);
+    ctx.fillStyle = secret ? (hot ? slag : "#2a3832") : hot ? clay : "#3a241c";
+    ctx.fillRect(x - (secret ? 2 : 3), y - 2, secret ? 4 : 6, 4);
   }
 }
 
@@ -349,7 +460,7 @@ function drawMap(ctx: CanvasRenderingContext2D, scene: Extract<Scene, { kind: "m
     const a = NODES[link.from];
     const b = NODES[link.to];
     const hot = scene.progress.cleared.includes(link.from);
-    drawTunnel(ctx, a.x, a.y, b.x, b.y, hot);
+    drawTunnel(ctx, a.x, a.y, b.x, b.y, hot, link.gate === "secret");
   }
 
   for (const id of Object.keys(NODES) as NodeId[]) {
@@ -361,7 +472,7 @@ function drawMap(ctx: CanvasRenderingContext2D, scene: Extract<Scene, { kind: "m
     ctx.fillRect(node.x - 16, node.y - 18, 32, 26);
     ctx.fillStyle = cleared ? coal : unlocked ? "#6a3028" : "#1a100e";
     ctx.fillRect(node.x - 12, node.y - 12, 24, 16);
-    if (id === "cinder") {
+    if (id === "cinder" || scene.progress.secrets.includes(id)) {
       ctx.fillStyle = slag;
       ctx.fillRect(node.x - 12, node.y - 14, 24, 2);
     }
@@ -372,7 +483,7 @@ function drawMap(ctx: CanvasRenderingContext2D, scene: Extract<Scene, { kind: "m
     }
   }
 
-  drawKeeper(ctx, scene.pos.x - 5, scene.pos.y - 22, Math.floor(scene.time * 4) % 2, 1, false);
+  drawKeeper(ctx, scene.pos.x - 5, scene.pos.y - 22, Math.floor(scene.time * 4) % 2, 1, false, "idle");
   drawText(ctx, "The flue", 44, 12, glaze, 2);
   const coinCount = String(scene.coins);
   drawCoin(ctx, VIEW_W - 22 - coinCount.length * 6, 10, scene.time, 2);
@@ -411,8 +522,9 @@ export function draw(ctx: CanvasRenderingContext2D, scene: Scene): void {
       ctx.fillStyle = "rgba(20,17,14,0.72)";
       ctx.fillRect(0, 0, VIEW_W, VIEW_H);
       drawTextCentered(ctx, "Paused", VIEW_W / 2, 96, glaze, 3);
-      drawTextCentered(ctx, "Jump continues", VIEW_W / 2, 128, smoke, 1);
-      drawTextCentered(ctx, "X leaves the chamber", VIEW_W / 2, 142, smoke, 1);
+      drawTextCentered(ctx, "Jump continues", VIEW_W / 2, 124, smoke, 1);
+      drawTextCentered(ctx, "R restarts the chamber", VIEW_W / 2, 138, smoke, 1);
+      drawTextCentered(ctx, "X leaves the chamber", VIEW_W / 2, 152, smoke, 1);
     }
   }
 }

@@ -72,6 +72,13 @@ test("campaign rooms are well formed", () => {
     expect(text.split("x").length - 1).toBe(1);
   }
   expect(levelById.twin!.rows.join("")).toContain("z");
+  const bellows = levelById.bellows!.rows.join("");
+  expect(bellows).toContain("z");
+  expect(bellows).toContain("*");
+  expect(bellows).toContain("G");
+  const draft = levelById.draft!.rows.join("");
+  expect(draft).toContain("=");
+  expect(draft).toContain("w");
 });
 
 test("a full jump rises about three and a half tiles", () => {
@@ -249,4 +256,106 @@ test("the flue opens forward, and the cinder path is a shortcut", () => {
   expect(progress.unlocked).not.toContain("kiln");
   progress = noteClear(progress, "gate", false);
   expect(progress.unlocked).toContain("kiln");
+});
+
+test("bellows is the road after the hearth, and its secret opens the draft", () => {
+  let progress = derive([], []);
+  progress = noteClear(progress, "kindling", false);
+  progress = noteClear(progress, "hearth", false);
+  expect(progress.unlocked).toContain("bellows");
+  expect(progress.unlocked).not.toContain("twin");
+  expect(progress.unlocked).not.toContain("draft");
+
+  progress = noteClear(progress, "bellows", true);
+  expect(progress.secrets).toContain("bellows");
+  expect(progress.unlocked).toContain("draft");
+  expect(progress.unlocked).toContain("twin");
+  expect(progress.unlocked).not.toContain("patrol");
+  expect(pickNeighbor("bellows", 1, 0, progress)).toBe("draft");
+});
+
+function blankRoom(width = 24): string[] {
+  return Array.from({ length: 15 }, () => ".".repeat(width));
+}
+
+test("a coil throws you onto a shelf a jump cannot reach", () => {
+  const width = 24;
+  const rows = blankRoom(width);
+  rows[8] = `${".".repeat(9)}${"#".repeat(8)}${".".repeat(7)}`;
+  rows[12] = `${".".repeat(2)}p${".".repeat(4)}*${".".repeat(16)}`;
+  rows[13] = "#".repeat(width);
+  rows[14] = "#".repeat(width);
+  const world = createWorld({ id: "coil", name: "Coil", hint: "", heat: 0, width, height: 15, rows });
+  let high = false;
+  for (let i = 0; i < 240; i++) {
+    step(world, { left: false, right: true, jumpPressed: false, jumpHeld: true, placePressed: false }, STEP);
+    if (world.player.grounded && world.player.y < 9 * TILE) high = true;
+  }
+  if (!high) {
+    throw new Error(`missed the shelf x=${world.player.x.toFixed(1)} y=${world.player.y.toFixed(1)} status=${world.status}`);
+  }
+});
+
+test("a shelf carries you over spikes", () => {
+  const width = 28;
+  const rows = blankRoom(width);
+  rows[12] = `${".".repeat(4)}=${".".repeat(23)}`;
+  const floor = Array<string>(width).fill("#");
+  for (let x = 6; x <= 22; x++) floor[x] = "^";
+  rows[13] = floor.join("");
+  rows[14] = "#".repeat(width);
+  const world = createWorld({ id: "shelf", name: "Shelf", hint: "", heat: 0, width, height: 15, rows });
+  const shelf = world.movers[0]!;
+  world.player.x = shelf.x + 6;
+  world.player.y = shelf.y - PLAYER_H;
+  world.player.riding = 0;
+  world.player.grounded = true;
+  const start = world.player.x;
+  frames(world, 100);
+  expect(world.status).toBe("play");
+  expect(Math.abs(world.player.x - (world.movers[0]!.x + 6))).toBeLessThan(24);
+  expect(Math.abs(world.player.x - start)).toBeGreaterThan(8);
+});
+
+test("a grate stays shut until every coin is taken", () => {
+  const width = 18;
+  const rows = blankRoom(width);
+  rows[9] = `${".".repeat(8)}G${".".repeat(9)}`;
+  rows[10] = `${".".repeat(8)}G${".".repeat(9)}`;
+  rows[11] = `${".".repeat(8)}G${".".repeat(9)}`;
+  rows[12] = "..p..c..G.......x.";
+  rows[13] = "#".repeat(width);
+  rows[14] = "#".repeat(width);
+  const level: Level = { id: "grate", name: "Grate", hint: "", heat: 0, width, height: 15, rows };
+  const blocked = createWorld(level);
+  blocked.player.x = 7 * TILE;
+  blocked.player.y = 13 * TILE - PLAYER_H;
+  frames(blocked, 90, { ...hold, right: true });
+  expect(blocked.gatesOpen).toBe(false);
+  expect(blocked.player.x).toBeLessThan(8 * TILE);
+  expect(blocked.status).toBe("play");
+
+  const open = createWorld(level);
+  let took = false;
+  for (let i = 0; i < 240 && !took; i++) {
+    step(open, { ...hold, right: true }, STEP);
+    took = open.events.some((event) => event.t === "coin") || open.gatesOpen;
+  }
+  expect(open.gatesOpen).toBe(true);
+
+  const remembered = createWorld(level, new Set(["grate:5:12"]));
+  expect(remembered.gatesOpen).toBe(true);
+});
+
+test("landing on a wasp stomps it", () => {
+  const world = createWorld(levelById.draft!);
+  const wasp = world.enemies.find((enemy) => enemy.kind === "wasp");
+  if (!wasp) throw new Error("draft has no wasp");
+  world.player.x = wasp.x;
+  world.player.y = wasp.y - PLAYER_H - 2;
+  world.player.vy = 200;
+  world.player.grounded = false;
+  frames(world, 8);
+  expect(wasp.alive).toBe(false);
+  expect(world.status).toBe("play");
 });

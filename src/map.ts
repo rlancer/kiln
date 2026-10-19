@@ -1,11 +1,13 @@
 export const NODES = {
-  kindling: { x: 46, y: 188, name: "Kindling" },
-  hearth: { x: 110, y: 188, name: "Hearth" },
-  twin: { x: 174, y: 164, name: "Twin pits" },
-  patrol: { x: 252, y: 188, name: "Patrol" },
-  cinder: { x: 174, y: 96, name: "Cinder path" },
-  gate: { x: 252, y: 96, name: "Ember gate" },
-  kiln: { x: 252, y: 36, name: "The kiln" },
+  kindling: { x: 48, y: 188, name: "Kindling" },
+  hearth: { x: 108, y: 188, name: "Hearth" },
+  bellows: { x: 108, y: 118, name: "Bellows" },
+  twin: { x: 172, y: 154, name: "Twin pits" },
+  patrol: { x: 246, y: 188, name: "Patrol" },
+  draft: { x: 246, y: 124, name: "Draft" },
+  cinder: { x: 172, y: 64, name: "Cinder path" },
+  gate: { x: 246, y: 74, name: "Ember gate" },
+  kiln: { x: 246, y: 28, name: "The kiln" },
 } as const;
 
 export type NodeId = keyof typeof NODES;
@@ -14,15 +16,18 @@ type Gate = "always" | "secret";
 
 export const LINKS: { from: NodeId; to: NodeId; gate: Gate }[] = [
   { from: "kindling", to: "hearth", gate: "always" },
-  { from: "hearth", to: "twin", gate: "always" },
+  { from: "hearth", to: "bellows", gate: "always" },
+  { from: "bellows", to: "twin", gate: "always" },
   { from: "twin", to: "patrol", gate: "always" },
-  { from: "patrol", to: "gate", gate: "always" },
+  { from: "patrol", to: "draft", gate: "always" },
+  { from: "draft", to: "gate", gate: "always" },
   { from: "gate", to: "kiln", gate: "always" },
   { from: "twin", to: "cinder", gate: "secret" },
   { from: "cinder", to: "gate", gate: "always" },
+  { from: "bellows", to: "draft", gate: "secret" },
 ];
 
-const ORDER: NodeId[] = ["kindling", "hearth", "twin", "patrol", "gate", "kiln", "cinder"];
+const ORDER: NodeId[] = ["kindling", "hearth", "bellows", "twin", "patrol", "draft", "cinder", "gate", "kiln"];
 
 export type Progress = {
   cleared: NodeId[];

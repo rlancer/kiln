@@ -36,7 +36,7 @@
         bottom: 0;
         padding: 12px;
         gap: 8px;
-        grid-template-columns: 1fr 1fr 1fr 1fr;
+        grid-template-columns: 1fr 1fr 1fr;
       }
       .touch button {
         font: 700 13px "Courier New", ui-monospace, monospace;
@@ -72,12 +72,14 @@
     </style>
   </head>
   <body>
-    <canvas id="game" width="320" height="240" tabindex="0" aria-label="Kiln. Arrows move, Z or space jumps, X sets a brick."></canvas>
+    <canvas id="game" width="320" height="240" tabindex="0" aria-label="Kiln. Arrows move, Z or space jumps, X sets a brick, R restarts."></canvas>
     <p id="status" class="sr-only" aria-live="polite">Kiln.</p>
     <div class="touch">
+      <button type="button" data-k="up">Up</button>
+      <button type="button" data-k="down">Down</button>
+      <button type="button" data-k="jump">Jump</button>
       <button type="button" data-k="left">Left</button>
       <button type="button" data-k="right">Right</button>
-      <button type="button" data-k="jump">Jump</button>
       <button type="button" data-k="place">Brick</button>
     </div>
     <script type="module" src="/main.js"></script>
