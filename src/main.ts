@@ -1,5 +1,6 @@
-import { play, setMuted } from "./audio";
-import { STEP, VIEW_H, VIEW_W } from "./constants";
+import { play, setBed, setMuted, unlock } from "./audio";
+import { PLAYER_H, PLAYER_W, STEP, VIEW_H, VIEW_W } from "./constants";
+import { absorb, createFx, openIris, tickFx } from "./fx";
 import { levelById } from "./levels";
 import {
   NODES,
@@ -78,6 +79,8 @@ function boot(): void {
   let outcome: "cleared" | "secret" | null = null;
   let resetArm = 0;
   let clock = 0;
+  const fx = createFx();
+  const BANNER = 1.15;
 
   const keys = new Set<string>();
   const touch = new Set<string>();
@@ -92,6 +95,11 @@ function boot(): void {
     if (status.textContent !== text) status.textContent = text;
   };
 
+  const irisOnPlayer = (w: World) => {
+    openIris(fx, w.player.x + PLAYER_W / 2 - w.camX, w.player.y + PLAYER_H / 2, reduced);
+  };
+  const irisOnToken = () => openIris(fx, token.x, token.y - 14, reduced);
+
   const enter = (id: NodeId) => {
     const level = levelById[id];
     if (!level) return;
@@ -101,6 +109,7 @@ function boot(): void {
     banner = "";
     bannerLeft = 0;
     outcome = null;
+    if (world) irisOnPlayer(world);
     say(`${level.name}. ${level.hint}`);
   };
 
@@ -118,10 +127,12 @@ function boot(): void {
     mapAnim = null;
     if (node === "kiln" && !secret) {
       mode = "won";
+      openIris(fx, VIEW_W / 2, 150, reduced);
       say("The kiln stays lit. Jump returns to the flue.");
       return;
     }
     mode = "map";
+    irisOnToken();
     say(`The flue. ${NODES[node].name} is lit.`);
   };
 
@@ -158,6 +169,7 @@ function boot(): void {
       setMuted(save.mute);
       persist();
     }
+    unlock();
     if (event.code === "Escape" && mode === "play") mode = "pause";
     else if (event.code === "Escape" && mode === "pause") mode = "play";
     canvas.focus();
@@ -169,6 +181,7 @@ function boot(): void {
 
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("pointerdown", () => unlock());
 
   for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>("[data-k]"))) {
     const name = button.dataset.k ?? "";
@@ -185,6 +198,7 @@ function boot(): void {
       jumpEdge = true;
     }
     if (name === "down") dirEdge = { x: 0, y: 1 };
+      unlock();
       canvas.focus();
     };
     const release = () => touch.delete(name);
@@ -193,12 +207,26 @@ function boot(): void {
     button.addEventListener("pointercancel", release);
   }
 
+  // Faint CRT rows, one dark line per game pixel, only once pixels are big enough to read them.
+  let scanlines: CanvasPattern | null = null;
   const fit = () => {
     const scale = Math.max(1, Math.floor(Math.min(window.innerWidth / VIEW_W, (window.innerHeight - 8) / VIEW_H)));
     canvas.width = VIEW_W * scale;
     canvas.height = VIEW_H * scale;
     canvas.style.width = `${VIEW_W * scale}px`;
     canvas.style.height = `${VIEW_H * scale}px`;
+    scanlines = null;
+    if (scale >= 3) {
+      const tile = document.createElement("canvas");
+      tile.width = 1;
+      tile.height = scale;
+      const tctx = tile.getContext("2d");
+      if (tctx) {
+        tctx.fillStyle = "rgba(0,0,0,0.16)";
+        tctx.fillRect(0, scale - 1, 1, 1);
+        scanlines = ctx.createPattern(tile, "repeat");
+      }
+    }
   };
   fit();
   window.addEventListener("resize", fit);
@@ -216,12 +244,16 @@ function boot(): void {
     resetArm = Math.max(0, resetArm - dt);
     const input = readInput();
 
+    tickFx(fx, mode === "play" ? world : null, dt, reduced);
+
     if (mode === "title" && input.jumpPressed) {
       mode = "map";
+      irisOnToken();
       say("The flue. Jump enters a chamber.");
       play("lock");
     } else if (mode === "won" && input.jumpPressed) {
       mode = "map";
+      irisOnToken();
       say("The flue.");
     } else if ((mode === "play" || mode === "pause") && world && rEdge) {
       const level = world.level;
@@ -230,6 +262,7 @@ function boot(): void {
       banner = "";
       bannerLeft = 0;
       outcome = null;
+      irisOnPlayer(world);
       say(`${level.name}. ${level.hint}`);
     } else if (mode === "pause") {
       say("Paused. Jump continues. R restarts. X leaves the chamber.");
@@ -238,6 +271,7 @@ function boot(): void {
         mode = "map";
         world = null;
         token = { x: NODES[node].x, y: NODES[node].y };
+        irisOnToken();
         say(`The flue. Left ${NODES[node].name}.`);
       }
     } else if (mode === "map") {
@@ -283,6 +317,9 @@ function boot(): void {
           say("Press R again to reset the flue.");
         }
       }
+    } else if (mode === "play" && world && fx.freeze > 0) {
+      // Hit-stop: hold the frame for a beat on heavy impacts.
+      fx.freeze -= dt;
     } else if (mode === "play" && world) {
       step(world, input, dt);
       for (const event of world.events) {
@@ -290,11 +327,11 @@ function boot(): void {
           save.coins.push(event.key);
           persist();
         }
-        if (event.t !== "coin") play(event.t);
+        play(event.t, absorb(fx, world, event, reduced));
         if (event.t === "exit" || event.t === "secret") {
           outcome = event.t === "secret" ? "secret" : "cleared";
           banner = event.t === "secret" ? "A side flue opens" : `${world.level.name} lit`;
-          bannerLeft = 1.15;
+          bannerLeft = BANNER;
         }
       }
       if (bannerLeft > 0) {
@@ -302,6 +339,8 @@ function boot(): void {
         if (bannerLeft <= 0 && outcome) finishChamber();
       }
     }
+
+    setBed(mode === "play" || mode === "pause" ? "chamber" : "hearth");
 
     jumpEdge = false;
     placeEdge = false;
@@ -340,9 +379,15 @@ function boot(): void {
                 world: world ?? createWorld(levelById.kindling!, new Set(save.coins)),
                 reduced,
                 banner: bannerLeft > 0 ? banner : null,
+                bannerT: BANNER - bannerLeft,
                 paused: mode === "pause",
               };
-    draw(ctx, scene);
+    draw(ctx, scene, fx);
+    if (scanlines) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = scanlines;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
   };
 
   frame = requestAnimationFrame(frameLoop);

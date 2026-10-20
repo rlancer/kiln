@@ -9,6 +9,14 @@ const server = Bun.serve({
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
     }
+    if (url.pathname === "/music/hearth.wav" || url.pathname === "/music/chamber.wav") {
+      const file = Bun.file(`public${url.pathname}`);
+      if (await file.exists()) {
+        return new Response(file, {
+          headers: { "Content-Type": "audio/wav", "Cache-Control": "no-cache" },
+        });
+      }
+    }
     if (url.pathname === "/main.js") {
       const result = await Bun.build({
         entrypoints: ["./src/main.ts"],

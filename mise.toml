@@ -15,6 +15,10 @@ run = "bun run start"
 description = "Run simulation tests"
 run = "bun test"
 
+[tasks.build]
+description = "Build the static site into dist/"
+run = "bun run build"
+
 [tasks.typecheck]
 description = "Typecheck the game"
 run = "bun run typecheck"

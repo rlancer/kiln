@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "bun run src/serve.ts",
     "start": "bun run src/serve.ts",
+    "build": "bun run scripts/build.ts",
+    "deploy": "bun run build && bun --cwd deploy run deploy",
+    "deploy:staging": "bun run build && bun --cwd deploy run deploy:staging",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },

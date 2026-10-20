@@ -1,0 +1,14 @@
+{
+  "name": "kiln-deploy",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "deploy": "cf deploy --mode production",
+    "deploy:staging": "cf deploy --mode staging"
+  },
+  "devDependencies": {
+    "cf": "1.0.0-beta.18",
+    "wrangler": "^4.151.1"
+  }
+}
